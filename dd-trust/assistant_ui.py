@@ -1,51 +1,13 @@
 import streamlit as st
 import os
 import time
-from openai import OpenAI, AssistantEventHandler
+from openai import OpenAI
 from dotenv import load_dotenv
-from typing_extensions import override
 
 load_dotenv()
 
 # Initialize the OpenAI client
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
-class EventHandler(AssistantEventHandler):
-    def __init__(self, placeholder):
-        super().__init__()
-        self.placeholder = placeholder
-        self.text = ""
-        self.started = False
-
-    @override
-    def on_text_created(self, text) -> None:
-        if not self.started:
-            self.text = text.value
-            self.started = True
-        else:
-            self.text += text.value
-        self.placeholder.markdown(self.text)
-
-    @override
-    def on_text_delta(self, delta, snapshot):
-        self.text += delta.value
-        self.placeholder.markdown(self.text)
-
-    def on_tool_call_created(self, tool_call):
-        self.text += f"\n{tool_call.type}\n"
-        self.placeholder.markdown(self.text)
-
-    def on_tool_call_delta(self, delta, snapshot):
-        if delta.type == 'code_interpreter':
-            if delta.code_interpreter.input:
-                self.text += delta.code_interpreter.input.value
-                self.placeholder.markdown(self.text)
-            if delta.code_interpreter.outputs:
-                self.text += "\n\noutput >"
-                for output in delta.code_interpreter.outputs:
-                    if output.type == "logs":
-                        self.text += f"\n{output.logs}"
-                self.placeholder.markdown(self.text)
 
 def wait_on_run(run, thread_id):
     while run.status == "queued" or run.status == "in_progress":
@@ -57,6 +19,8 @@ def wait_on_run(run, thread_id):
     return run
 
 def main():
+    st.title("OpenAI Assistant Chat")
+
     # Initialize session state
     if "thread_id" not in st.session_state:
         thread = client.beta.threads.create()
@@ -86,19 +50,25 @@ def main():
             content=user_input,
         )
 
-        # Stream the response
-        with st.chat_message("assistant"):
-            placeholder = st.empty()
-            event_handler = EventHandler(placeholder)
-            with client.beta.threads.runs.stream(
-                thread_id=st.session_state.thread_id,
-                assistant_id=os.getenv("ASSISTANT_ID"),
-                event_handler=event_handler,
-            ) as stream:
-                stream.until_done()
+        # Create a run
+        run = client.beta.threads.runs.create(
+            thread_id=st.session_state.thread_id,
+            assistant_id=os.getenv("ASSISTANT_ID"),
+        )
 
-            # Add assistant message to chat history
-            st.session_state.messages.append({"role": "assistant", "content": event_handler.text})
+        # Wait for the run to complete
+        with st.spinner("Assistant is thinking..."):
+            run = wait_on_run(run, st.session_state.thread_id)
+
+        # Retrieve and display the assistant's response
+        messages = client.beta.threads.messages.list(thread_id=st.session_state.thread_id)
+        assistant_message = next(msg for msg in messages if msg.role == "assistant")
+        assistant_response = assistant_message.content[0].text.value
+
+        # Add assistant message to chat history
+        st.session_state.messages.append({"role": "assistant", "content": assistant_response})
+        with st.chat_message("assistant"):
+            st.write(assistant_response)
 
 if __name__ == "__main__":
     main()
