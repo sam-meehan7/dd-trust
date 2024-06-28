@@ -19,7 +19,6 @@ def wait_on_run(run, thread_id):
     return run
 
 def main():
-    st.title("OpenAI Assistant Chat")
 
     # Initialize session state
     if "thread_id" not in st.session_state:
